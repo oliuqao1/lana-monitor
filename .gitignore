@@ -1,0 +1,10 @@
+# Sessão do Instagram (será configurada via variável de ambiente)
+ig_instagrapi_session.json
+
+# Logs
+*.log
+__pycache__/
+*.pyc
+.env
+ig_instagrapi_session.json
+session_b64.txt
