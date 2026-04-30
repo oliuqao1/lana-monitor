@@ -54,6 +54,8 @@ POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "30"))
 
 # Modo de teste: responder apenas a este usuário (deixar vazio para responder a todos)
 TEST_MODE_USER = os.environ.get("TEST_MODE_USER", "")
+# Suporte a múltiplos usuários de teste separados por vírgula
+TEST_MODE_USERS = [u.strip().lower() for u in TEST_MODE_USER.split(",") if u.strip()] if TEST_MODE_USER else []
 
 # ─────────────────────────────────────────────────────────────
 # SYSTEM PROMPT
@@ -344,7 +346,7 @@ def process_message(cl, thread_id, thread_title, user_id, message_text, message_
 def main():
     log.info("🚀 Instagram Monitor iniciado - Lana Estética")
     if TEST_MODE_USER:
-        log.info(f"⚠️  MODO DE TESTE: respondendo apenas a @{TEST_MODE_USER}")
+        log.info(f"⚠️  MODO DE TESTE: respondendo apenas a: {', '.join('@' + u for u in TEST_MODE_USERS)}")
 
     try:
         cl = create_ig_client()
@@ -355,7 +357,7 @@ def main():
 
     my_user_id = str(cl.user_id)
     log.info(f"Logado como: {IG_USERNAME} (ID: {my_user_id})")
-    notify_telegram(f"✅ *Monitor do Instagram iniciado!*\nConta: @{IG_USERNAME}\n{'⚠️ MODO TESTE: apenas @' + TEST_MODE_USER if TEST_MODE_USER else 'Respondendo a todos os clientes.'}")
+    notify_telegram(f"✅ *Monitor do Instagram iniciado!*\nConta: @{IG_USERNAME}\n{'⚠️ MODO TESTE: apenas ' + ', '.join('@' + u for u in TEST_MODE_USERS) if TEST_MODE_USERS else 'Respondendo a todos os clientes.'}")
 
     while True:
         try:
@@ -380,9 +382,9 @@ def main():
                     continue
 
                 # Modo de teste: ignorar threads que não são do usuário de teste
-                if TEST_MODE_USER:
-                    thread_users = [u.username for u in thread.users]
-                    if TEST_MODE_USER not in thread_users:
+                if TEST_MODE_USERS:
+                    thread_users = [u.username.lower() for u in thread.users]
+                    if not any(tu in thread_users for tu in TEST_MODE_USERS):
                         processed_messages.add(msg_id)
                         continue
 
