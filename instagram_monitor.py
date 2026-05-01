@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Instagram Direct Monitor - Lana Estética v2.7
-VERSÃO ATUALIZADA: Betina com novo fluxo de agendamento (sem coleta de dados)
+Instagram Direct Monitor - Lana Estética v2.8
+VERSÃO ESTÁVEL: Betina sem histórico de conversa (cada mensagem é independente)
 """
 
 import os
@@ -209,7 +209,6 @@ HUMAN_KEYWORDS = [
 # ─────────────────────────────────────────────────────────────
 # ESTADO
 # ─────────────────────────────────────────────────────────────
-conversation_context = {}
 processed_messages = set()
 
 # ─────────────────────────────────────────────────────────────
@@ -219,30 +218,18 @@ def is_human_request(text):
     text_lower = text.lower()
     return any(kw in text_lower for kw in HUMAN_KEYWORDS)
 
-def generate_ai_response(thread_id, user_message):
-    """Gera resposta usando OpenAI"""
+def generate_ai_response(user_message):
+    """Gera resposta usando OpenAI - SEM HISTÓRICO"""
     try:
-        if thread_id not in conversation_context:
-            conversation_context[thread_id] = []
+        log.info(f"🔄 Chamando OpenAI para: {user_message[:50]}...")
         
-        # Adiciona mensagem do usuário
-        conversation_context[thread_id].append({
-            "role": "user",
-            "content": user_message
-        })
-        
-        # Limita histórico
-        if len(conversation_context[thread_id]) > 20:
-            conversation_context[thread_id] = conversation_context[thread_id][-20:]
-        
-        # Prepara mensagens
+        # Prepara mensagens SEM histórico
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT}
-        ] + conversation_context[thread_id]
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_message}
+        ]
         
-        log.info(f"🔄 Chamando OpenAI...")
-        
-        # Chama OpenAI
+        # Chama OpenAI com timeout
         response = ai_client.chat.completions.create(
             model="gpt-4.1-mini",
             messages=messages,
@@ -252,19 +239,12 @@ def generate_ai_response(thread_id, user_message):
         )
         
         ai_text = response.choices[0].message.content
-        log.info(f"✅ Resposta: {ai_text[:60]}...")
-        
-        # Adiciona resposta ao histórico
-        conversation_context[thread_id].append({
-            "role": "assistant",
-            "content": ai_text
-        })
-        
+        log.info(f"✅ Resposta gerada: {ai_text[:60]}...")
         return ai_text
         
     except Exception as e:
         log.error(f"❌ Erro ao chamar OpenAI: {e}")
-        return "Desculpe, tive um problema técnico. Por favor, entre em contato pelo WhatsApp: (11) 93257-1982"
+        return "Desculpe, tive um problema técnico. Por favor, entre em contato pelo WhatsApp: (11) 93257-1982 📱"
 
 # ─────────────────────────────────────────────────────────────
 # INSTAGRAM CLIENT
@@ -310,7 +290,7 @@ def process_message(cl, thread_id, thread_title, user_id, message_text, message_
             log.error(f"❌ Erro ao enviar: {e}")
         return
 
-    ai_response = generate_ai_response(thread_id, message_text)
+    ai_response = generate_ai_response(message_text)
 
     try:
         cl.direct_send(ai_response, thread_ids=[thread_id])
@@ -322,8 +302,8 @@ def process_message(cl, thread_id, thread_title, user_id, message_text, message_
 # LOOP PRINCIPAL
 # ─────────────────────────────────────────────────────────────
 def main():
-    log.info("🚀 Betina v2.7 - Lana Estética")
-    log.info("✅ Novo fluxo de agendamento (sem coleta de dados)")
+    log.info("🚀 Betina v2.8 - Lana Estética")
+    log.info("✅ Sem histórico de conversa (cada mensagem é independente)")
     
     if TEST_MODE_USERS:
         log.info(f"⚠️  MODO TESTE: {', '.join('@' + u for u in TEST_MODE_USERS)}")
