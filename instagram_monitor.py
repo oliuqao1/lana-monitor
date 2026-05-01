@@ -287,13 +287,16 @@ def main():
     
     # Carregar KB na inicialização
     KB = load_knowledge_base()
+    log.info(f"✅ KB Global carregada: {KB is not None}")
     if not KB:
         log.error("❌ Falha ao carregar KB. Encerrando.")
         notify_telegram("❌ *Monitor falhou ao iniciar*\nErro: Não consegui carregar o JSON da KB")
         sys.exit(1)
     
     # Construir prompt dinâmico com base na KB
+    log.info(f"🔨 Construindo prompt com KB...")
     system_prompt = build_system_prompt(KB)
+    log.info(f"✅ Prompt construído com sucesso (tamanho: {len(system_prompt)} chars)")
     
     if TEST_MODE_USER:
         log.info(f"⚠️  MODO DE TESTE: respondendo apenas a: {', '.join('@' + u for u in TEST_MODE_USERS)}")
