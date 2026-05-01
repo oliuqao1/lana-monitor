@@ -1,16 +1,7 @@
 #!/usr/bin/env python3
 """
-Instagram Direct Monitor - Lana Estética v2.0
-Monitora o Direct do Instagram e responde automaticamente com IA.
-Usa instagrapi (API mobile) para leitura e envio de mensagens.
-Sem ManyChat, sem limitação de 24h.
-Deploy: Railway.app
-
-MUDANÇAS V2.0:
-- Fetch do JSON da KB como fonte de verdade única
-- Remoção completa do CliniSite
-- Novo fluxo de agendamento baseado em JSON
-- Cache inteligente (carregado na inicialização)
+Instagram Direct Monitor - Lana Estética v2.2
+VERSÃO CORRIGIDA: Carrega JSON e usa como fonte de verdade
 """
 
 import os
@@ -25,9 +16,6 @@ from openai import OpenAI
 from instagrapi import Client
 from instagrapi.exceptions import LoginRequired, ChallengeRequired, TwoFactorRequired
 
-# ─────────────────────────────────────────────────────────────
-# CONFIGURAÇÕES
-# ─────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
@@ -35,30 +23,25 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# OpenAI
+# Configurações
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 ai_client = OpenAI(api_key=OPENAI_API_KEY)
 
-# Telegram
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8798305087:AAEUmxbeZJA8B1EqCyWQv72cxqtYmX_Lczo")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "7959934326")
 
-# Instagram credentials
 IG_USERNAME = os.environ.get("IG_USERNAME", "lana_estetica")
 IG_PASSWORD = os.environ.get("IG_PASSWORD", "")
 IG_SESSION_FILE = "/tmp/ig_instagrapi_session.json"
 IG_SESSION_B64 = os.environ.get("IG_SESSION_B64", "")
 
-# Polling
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "30"))
 
-# Modo de teste: responder apenas a estes usuários
 TEST_MODE_USER = os.environ.get("TEST_MODE_USER", "romulooooo,lana_rosangela")
 TEST_MODE_USERS = [u.strip().lower() for u in TEST_MODE_USER.split(",") if u.strip()] if TEST_MODE_USER else []
 
-# KB (Knowledge Base)
 KB_URL = "https://lanaestetica.com.br/_kb-internal.json"
-KB = None  # Será carregado na inicialização
+KB = None
 
 # ─────────────────────────────────────────────────────────────
 # CARREGAR KNOWLEDGE BASE
@@ -66,11 +49,13 @@ KB = None  # Será carregado na inicialização
 def load_knowledge_base():
     """Carrega o JSON da KB uma única vez na inicialização"""
     try:
-        log.info(f"Carregando KB de {KB_URL}...")
+        log.info(f"🔄 Carregando KB de {KB_URL}...")
         response = requests.get(KB_URL, timeout=10)
         response.raise_for_status()
         kb = response.json()
-        log.info("✅ KB carregada com sucesso!")
+        log.info(f"✅ KB carregada com sucesso!")
+        log.info(f"📋 Versão: {kb.get('versao', 'desconhecida')}")
+        log.info(f"📋 Procedimentos: {len(kb.get('precos', {}))}")
         return kb
     except Exception as e:
         log.error(f"❌ Erro ao carregar KB: {e}")
@@ -92,8 +77,6 @@ def build_system_prompt(kb):
     horarios = kb.get("horarios", {})
     agendamento = kb.get("agendamento", {})
     precos = kb.get("precos", {})
-    procedimentos = kb.get("procedimentos", [])
-    protocolos = kb.get("protocolos_exclusivos", [])
     
     # Formatar preços para exibição
     precos_formatados = []
@@ -106,12 +89,6 @@ def build_system_prompt(kb):
         precos_formatados.append(f"• {nome}: {preco} ({detalhes})")
     
     precos_str = "\n".join(precos_formatados)
-    
-    # Formatar horários
-    horarios_str = f"""
-Terça a Sábado: {horarios.get('terca', '09h às 19h')}
-Domingo e Segunda: Fechado
-"""
     
     # Extrair instruções de agendamento
     instrucoes_agendamento = agendamento.get("instrucao_agendamento_bot", {})
@@ -126,28 +103,25 @@ Domingo e Segunda: Fechado
 CLÍNICA: {clinica.get('nome', 'Lana Estética')}
 Lema: {clinica.get('lema', 'Estética avançada. Resultado que você sente.')}
 Responsável: Dra. Lana ({clinica.get('titulo', 'Biomédica Esteta')})
-Formação: {clinica.get('formacao', '')}
 
 LOCALIZAÇÃO:
 Endereço: {localizacao.get('endereco', '')}, {localizacao.get('bairro', '')} - {localizacao.get('cidade', '')}
 CEP: {localizacao.get('cep', '')}
-Metrô: {localizacao.get('metro', {}).get('estacao', '')} ({localizacao.get('metro', {}).get('linha', '')}) - {localizacao.get('metro', {}).get('distancia', '')}
-Estacionamento: {localizacao.get('como_chegar', '')}
+Metrô: {localizacao.get('metro', {}).get('estacao', '')} ({localizacao.get('metro', {}).get('linha', '')})
 
-HORÁRIOS DE FUNCIONAMENTO:{horarios_str}
+HORÁRIOS:
+Terça a Sábado: {horarios.get('terca', '09h às 19h')}
+Domingo e Segunda: Fechado
 
 CONTATO:
-WhatsApp: {contato.get('whatsapp', '')} - {contato.get('whatsapp_link', '')}
+WhatsApp: {contato.get('whatsapp', '')}
 Instagram: {contato.get('instagram', '')}
-Site: {contato.get('site', '')}
 
 ╔═══════════════════════════════════════════════════════════════╗
 ║                    PROCEDIMENTOS E PREÇOS                     ║
 ╚═══════════════════════════════════════════════════════════════╝
 
 {precos_str}
-
-Protocolos Exclusivos: {', '.join(protocolos)}
 
 ╔═══════════════════════════════════════════════════════════════╗
 ║                  FLUXO DE AGENDAMENTO                         ║
@@ -158,31 +132,17 @@ REGRA CRÍTICA: {instrucoes_agendamento.get('regra', 'NUNCA tentar agendar um ho
 Passos para agendamento:
 {passos_agendamento}
 
-Mensagem de confirmação para cliente:
-"{instrucoes_agendamento.get('mensagem_confirmacao_cliente', '')}"
-
-IMPORTANTE: {instrucoes_agendamento.get('importante', '')}
-
-Avaliação Inicial: {agendamento.get('avaliacao_inicial', {}).get('descricao', '')}
-
 ╔═══════════════════════════════════════════════════════════════╗
 ║                    REGRAS DE COMPORTAMENTO                    ║
 ╚═══════════════════════════════════════════════════════════════╝
 
-1. FONTE DE VERDADE: Todas as informações acima (preços, procedimentos, horários, agendamento) vêm do JSON da clínica. NUNCA invente ou altere essas informações.
-
+1. FONTE DE VERDADE: Todas as informações acima vêm do JSON. NUNCA invente informações.
 2. RESPOSTAS CURTAS: Máximo 3-4 frases. É Instagram Direct.
-
-3. TOM: Profissional, técnico, didático e acolhedor. Use no máximo 1-2 emojis por mensagem.
-
-4. AGENDAMENTO: Siga RIGOROSAMENTE o fluxo acima. Nunca ofereça datas/horários diretamente.
-
+3. TOM: Profissional, técnico, didático e acolhedor. Use no máximo 1-2 emojis.
+4. AGENDAMENTO: Siga RIGOROSAMENTE o fluxo acima.
 5. ATENDIMENTO HUMANO: Se cliente pedir para falar com alguém, responda:
-"Claro! Para falar diretamente com a gente, é só chamar no WhatsApp! 😊 {contato.get('whatsapp_link', '')}"
-
+   "Claro! Para falar diretamente com a gente, é só chamar no WhatsApp! 😊 {contato.get('whatsapp_link', 'https://wa.me/5511932571982')}"
 6. NUNCA INVENTE: Não crie informações sobre procedimentos, preços ou horários que não estejam no JSON acima.
-
-7. QUANDO TIVER DÚVIDA: Redirecione para WhatsApp ou avaliação inicial gratuita.
 """
     
     return prompt
@@ -234,7 +194,6 @@ def generate_ai_response(thread_id, user_message, system_prompt):
     
     conversation_context[thread_id].append({"role": "user", "content": user_message})
     
-    # Manter apenas os últimos 20 turnos de conversa
     if len(conversation_context[thread_id]) > 20:
         conversation_context[thread_id] = conversation_context[thread_id][-20:]
     
@@ -261,7 +220,6 @@ def create_ig_client():
     cl = Client()
     cl.delay_range = [1, 3]
 
-    # Carregar sessão a partir de variável de ambiente (base64)
     if IG_SESSION_B64:
         try:
             session_json = base64.b64decode(IG_SESSION_B64).decode("utf-8")
@@ -271,7 +229,6 @@ def create_ig_client():
         except Exception as e:
             log.warning(f"Erro ao decodificar IG_SESSION_B64: {e}")
 
-    # Carregar sessão do arquivo
     if Path(IG_SESSION_FILE).exists():
         try:
             cl.load_settings(IG_SESSION_FILE)
@@ -289,7 +246,7 @@ def process_message(cl, thread_id, thread_title, user_id, message_text, message_
     log.info(f"[MSG] Thread: {thread_title} | Msg: {message_text[:60]}")
 
     if is_human_request(message_text):
-        response = f"Claro! Para falar diretamente com a gente, é só chamar no WhatsApp! 😊 {KB.get('contato', {}).get('whatsapp_link', 'https://wa.me/5511932571982')}"
+        response = f"Claro! Para falar diretamente com a gente, é só chamar no WhatsApp! 😊 https://wa.me/5511932571982"
         try:
             cl.direct_send(response, thread_ids=[thread_id])
             log.info(f"[SENT] Atendimento humano → {thread_title}")
@@ -326,7 +283,7 @@ def process_message(cl, thread_id, thread_title, user_id, message_text, message_
 def main():
     global KB
     
-    log.info("🚀 Instagram Monitor v2.0 iniciado - Lana Estética")
+    log.info("🚀 Instagram Monitor v2.2 iniciado - Lana Estética")
     
     # Carregar KB na inicialização
     KB = load_knowledge_base()
@@ -351,7 +308,7 @@ def main():
     my_user_id = str(cl.user_id)
     log.info(f"Logado como: {IG_USERNAME} (ID: {my_user_id})")
     notify_telegram(
-        f"✅ *Monitor do Instagram iniciado! (v2.0)*\n"
+        f"✅ *Monitor do Instagram iniciado! (v2.2)*\n"
         f"Conta: @{IG_USERNAME}\n"
         f"KB: Carregada de {KB_URL}\n"
         f"{'⚠️ MODO TESTE: apenas ' + ', '.join('@' + u for u in TEST_MODE_USERS) if TEST_MODE_USERS else '✅ Respondendo a todos os clientes.'}"
