@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 """
-Instagram Direct Monitor - Lana Estética
+Instagram Direct Monitor - Lana Estética v2.0
 Monitora o Direct do Instagram e responde automaticamente com IA.
 Usa instagrapi (API mobile) para leitura e envio de mensagens.
 Sem ManyChat, sem limitação de 24h.
 Deploy: Railway.app
+
+MUDANÇAS V2.0:
+- Fetch do JSON da KB como fonte de verdade única
+- Remoção completa do CliniSite
+- Novo fluxo de agendamento baseado em JSON
+- Cache inteligente (carregado na inicialização)
 """
 
 import os
@@ -14,7 +20,6 @@ import time
 import base64
 import logging
 import requests
-from datetime import datetime, timedelta
 from pathlib import Path
 from openai import OpenAI
 from instagrapi import Client
@@ -38,127 +43,154 @@ ai_client = OpenAI(api_key=OPENAI_API_KEY)
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8798305087:AAEUmxbeZJA8B1EqCyWQv72cxqtYmX_Lczo")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "7959934326")
 
-# CliniSite
-CLINISITE_API = "https://clini.site/api/clini-hub/available-hours/18942"
-CLINISITE_PROCEDURE_ID = "1279352"
-
 # Instagram credentials
 IG_USERNAME = os.environ.get("IG_USERNAME", "lana_estetica")
 IG_PASSWORD = os.environ.get("IG_PASSWORD", "")
 IG_SESSION_FILE = "/tmp/ig_instagrapi_session.json"
-# Sessão em base64 (para passar como variável de ambiente no Railway)
 IG_SESSION_B64 = os.environ.get("IG_SESSION_B64", "")
 
 # Polling
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "30"))
 
-# Modo de teste: responder apenas a este usuário (deixar vazio para responder a todos)
-TEST_MODE_USER = os.environ.get("TEST_MODE_USER", "")
-# Suporte a múltiplos usuários de teste separados por vírgula
+# Modo de teste: responder apenas a estes usuários
+TEST_MODE_USER = os.environ.get("TEST_MODE_USER", "romulooooo,lana_rosangela")
 TEST_MODE_USERS = [u.strip().lower() for u in TEST_MODE_USER.split(",") if u.strip()] if TEST_MODE_USER else []
 
+# KB (Knowledge Base)
+KB_URL = "https://lanaestetica.com.br/_kb-internal.json"
+KB = None  # Será carregado na inicialização
+
 # ─────────────────────────────────────────────────────────────
-# SYSTEM PROMPT
+# CARREGAR KNOWLEDGE BASE
 # ─────────────────────────────────────────────────────────────
-SYSTEM_PROMPT = """Você é a Manu, assistente virtual da Lana Estética, clínica especializada em estética avançada localizada em São Paulo.
+def load_knowledge_base():
+    """Carrega o JSON da KB uma única vez na inicialização"""
+    try:
+        log.info(f"Carregando KB de {KB_URL}...")
+        response = requests.get(KB_URL, timeout=10)
+        response.raise_for_status()
+        kb = response.json()
+        log.info("✅ KB carregada com sucesso!")
+        return kb
+    except Exception as e:
+        log.error(f"❌ Erro ao carregar KB: {e}")
+        return None
 
-SOBRE A CLÍNICA:
-- Nome: Lana Estética
-- Responsável: Dra. Lana (biomédica esteta)
-- Endereço: Rua Salvador Simões, 1158, Alto do Ipiranga - São Paulo
-- A 300 metros da estação de metrô Alto do Ipiranga (Linha Verde)
-- Link Maps: https://goo.gl/maps/YsQaH3eqGJgTVpm76
-- Horário: Terça a Sábado, das 09h às 19h
-- WhatsApp: (11) 93257-1982 | https://wa.me/5511932571982
-
-FORMAS DE PAGAMENTO (todos os procedimentos):
-Pix, débito, crédito em até 6x sem juros.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PROCEDIMENTO: RADIANCE SKIN
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-QUANDO USAR: Qualquer menção a manchas, melasma, mancha no rosto, mancha de acne, mancha de medicamento → indique o Radiance Skin.
-
-COMPILADO PARA PRIMEIRO CONTATO (quando cliente perguntar sobre Radiance Skin ou manchas):
-✨ RADIANCE SKIN — Lana Estética
-
-O Radiance Skin é o nosso protocolo EXCLUSIVO para tratamento e controle de manchas resistentes. Desenvolvido e aplicado pela Dra. Lana, biomédica esteta especialista em tratamentos faciais.
-
-🔍 Foco principal:
-Melasma, manchas solares, manchas de acne e manchas causadas por medicamentos.
-
-🌟 De brinde, sua pele também:
-• Fica mais luminosa, com viço e uniforme
-• Perde o efeito casca de laranja
-• Tem flacidez e linhas de expressão reduzidas
-• Oleosidade e poros dilatados controlados
-
-📌 Como funciona:
-É feito um plano personalizado e eficaz pensado especificamente para você — seu tipo de pele, seu estilo de vida, sua rotina. Aqui não existe plano genérico. Cada pessoa é única e o tratamento é feito assim.
-
-💰 Investimento:
-• Sessão avulsa: R$480
-• Pacote 3 sessões (recomendado): R$990 — economia de R$450!
-
-Quer saber se o Radiance Skin é para você? Me conta um pouquinho sobre as suas manchas 😊
-
-DETALHES DO PROTOCOLO:
-- Primeira sessão: LED terapia, peeling hidratante, skincare personalizado (~1h, pode ser mais longa pela avaliação inicial)
-- Sessões seguintes: peelings progressivos, suaves, sem agredir a pele
-- Tratamento de dentro para fora: ativos via oral + skincare em casa adaptado ao orçamento
-- Resultado: pele mais fina, iluminada, melasma controlado, rejuvenescimento geral
-- Intervalo entre sessões: definido pela Dra. Lana conforme evolução
-
-CONTRAINDICAÇÕES: Gestantes, uso de isotretinoína (Roacutan), pele muito sensível no momento.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ESTRATÉGIA DE VENDAS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-MENTALIDADE: Essa cliente provavelmente convive com o melasma há anos. Já tentou produtos, já se frustrou, talvez já desistiu de tratar de verdade. Sua missão é fazer ela entender que o Radiance Skin é o tratamento definitivo — não mais um produto qualquer. Quando ela entender isso, ela mesma cria a urgência.
-
-OBJEÇÃO DE PREÇO:
-- Não é tratamento genérico — é protocolo feito para ela, pensado para ter resultado
-- O que sai mais caro é continuar tentando produto aqui e ali sem resultado, com risco de efeito rebote
-- É um investimento: menos gasto com maquiagem, mais confiança, qualidade de vida
-- Cabe em até 6x sem juros
-
-CLIENTE QUE SUMIU: Retome com mensagem leve: "Oi! Ficou alguma dúvida sobre o Radiance Skin? Estou aqui para te ajudar. 😊"
-
-FUNIL DE PREÇO SAZONAL: O Radiance Skin é permanente. A urgência vem do preço promocional por tempo limitado, não de avaliação gratuita.
-
-IMPACTO EMOCIONAL: A cliente que deviava o olhar, recebia perguntas constrangedoras sobre a mancha, gastava com maquiagem para cobrir — depois do tratamento voltou a olhar no olho das pessoas, se sentiu mais jovem e confiante. Use isso com empatia.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FLUXO DE AGENDAMENTO
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-OBJETIVO: Todos os atendimentos devem ser conduzidos para o AGENDAMENTO DO TRATAMENTO (não avaliação gratuita). O compromisso começa desde o agendamento.
-
-Quando cliente quiser agendar:
-1. Pergunte o nome completo
-2. Pergunte o WhatsApp
-3. Pergunte: prefere manhã ou tarde?
-4. Diga que vai verificar os horários disponíveis (o sistema faz isso automaticamente)
-5. Quando receber os horários, apresente as opções
-6. Confirme o horário escolhido
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-REGRAS IMPORTANTES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-- Respostas CURTAS e DIRETAS (máximo 3-4 frases). É Instagram Direct.
-- Tom profissional, técnico, didático e acolhedor.
-- Use no máximo 1-2 emojis por mensagem.
-- Nunca invente informações, especialmente sobre horários disponíveis.
-- Todos os atendimentos devem ser conduzidos para o AGENDAMENTO DO TRATAMENTO.
-- Qualquer menção a manchas, melasma → indique o Radiance Skin.
-
-MENSAGENS DIRECIONADAS À DRA. LANA:
-Quando a cliente falar diretamente com a Dra. Lana, responda de forma calorosa como assistente, agradeça em nome da Dra. Lana e redirecione para o atendimento. NÃO diga que é IA.
-
-ATENDIMENTO HUMANO / FALAR COM ALGUÉM:
-Se a cliente pedir para falar com uma pessoa, humano, atendente, Lana, Dra. → responda:
-"Claro! Para falar diretamente com a gente, é só chamar no WhatsApp! 😊 https://wa.me/5511932571982"
-E inclua [HUMANO] no início da resposta para notificar o sistema.
+# ─────────────────────────────────────────────────────────────
+# CONSTRUIR SYSTEM PROMPT DINÂMICO
+# ─────────────────────────────────────────────────────────────
+def build_system_prompt(kb):
+    """Constrói o prompt do sistema com base no JSON da KB"""
+    if not kb:
+        log.error("KB não carregada. Usando prompt padrão.")
+        return get_default_system_prompt()
+    
+    # Extrair informações da KB
+    clinica = kb.get("clinica", {})
+    contato = kb.get("contato", {})
+    localizacao = kb.get("localizacao", {})
+    horarios = kb.get("horarios", {})
+    agendamento = kb.get("agendamento", {})
+    precos = kb.get("precos", {})
+    procedimentos = kb.get("procedimentos", [])
+    protocolos = kb.get("protocolos_exclusivos", [])
+    
+    # Formatar preços para exibição
+    precos_formatados = []
+    for proc_key, proc_info in precos.items():
+        if proc_key.startswith("_"):
+            continue
+        nome = proc_info.get("nome", "")
+        preco = proc_info.get("preco", "")
+        detalhes = proc_info.get("detalhes", "")
+        precos_formatados.append(f"• {nome}: {preco} ({detalhes})")
+    
+    precos_str = "\n".join(precos_formatados)
+    
+    # Formatar horários
+    horarios_str = f"""
+Terça a Sábado: {horarios.get('terca', '09h às 19h')}
+Domingo e Segunda: Fechado
 """
+    
+    # Extrair instruções de agendamento
+    instrucoes_agendamento = agendamento.get("instrucao_agendamento_bot", {})
+    passos_agendamento = "\n".join(instrucoes_agendamento.get("passos", []))
+    
+    prompt = f"""Você é a Manu, assistente virtual da Lana Estética, clínica especializada em estética avançada.
+
+╔═══════════════════════════════════════════════════════════════╗
+║              INFORMAÇÕES DA CLÍNICA (FONTE: JSON)             ║
+╚═══════════════════════════════════════════════════════════════╝
+
+CLÍNICA: {clinica.get('nome', 'Lana Estética')}
+Lema: {clinica.get('lema', 'Estética avançada. Resultado que você sente.')}
+Responsável: Dra. Lana ({clinica.get('titulo', 'Biomédica Esteta')})
+Formação: {clinica.get('formacao', '')}
+
+LOCALIZAÇÃO:
+Endereço: {localizacao.get('endereco', '')}, {localizacao.get('bairro', '')} - {localizacao.get('cidade', '')}
+CEP: {localizacao.get('cep', '')}
+Metrô: {localizacao.get('metro', {}).get('estacao', '')} ({localizacao.get('metro', {}).get('linha', '')}) - {localizacao.get('metro', {}).get('distancia', '')}
+Estacionamento: {localizacao.get('como_chegar', '')}
+
+HORÁRIOS DE FUNCIONAMENTO:{horarios_str}
+
+CONTATO:
+WhatsApp: {contato.get('whatsapp', '')} - {contato.get('whatsapp_link', '')}
+Instagram: {contato.get('instagram', '')}
+Site: {contato.get('site', '')}
+
+╔═══════════════════════════════════════════════════════════════╗
+║                    PROCEDIMENTOS E PREÇOS                     ║
+╚═══════════════════════════════════════════════════════════════╝
+
+{precos_str}
+
+Protocolos Exclusivos: {', '.join(protocolos)}
+
+╔═══════════════════════════════════════════════════════════════╗
+║                  FLUXO DE AGENDAMENTO                         ║
+╚═══════════════════════════════════════════════════════════════╝
+
+REGRA CRÍTICA: {instrucoes_agendamento.get('regra', 'NUNCA tentar agendar um horário diretamente.')}
+
+Passos para agendamento:
+{passos_agendamento}
+
+Mensagem de confirmação para cliente:
+"{instrucoes_agendamento.get('mensagem_confirmacao_cliente', '')}"
+
+IMPORTANTE: {instrucoes_agendamento.get('importante', '')}
+
+Avaliação Inicial: {agendamento.get('avaliacao_inicial', {}).get('descricao', '')}
+
+╔═══════════════════════════════════════════════════════════════╗
+║                    REGRAS DE COMPORTAMENTO                    ║
+╚═══════════════════════════════════════════════════════════════╝
+
+1. FONTE DE VERDADE: Todas as informações acima (preços, procedimentos, horários, agendamento) vêm do JSON da clínica. NUNCA invente ou altere essas informações.
+
+2. RESPOSTAS CURTAS: Máximo 3-4 frases. É Instagram Direct.
+
+3. TOM: Profissional, técnico, didático e acolhedor. Use no máximo 1-2 emojis por mensagem.
+
+4. AGENDAMENTO: Siga RIGOROSAMENTE o fluxo acima. Nunca ofereça datas/horários diretamente.
+
+5. ATENDIMENTO HUMANO: Se cliente pedir para falar com alguém, responda:
+"Claro! Para falar diretamente com a gente, é só chamar no WhatsApp! 😊 {contato.get('whatsapp_link', '')}"
+
+6. NUNCA INVENTE: Não crie informações sobre procedimentos, preços ou horários que não estejam no JSON acima.
+
+7. QUANDO TIVER DÚVIDA: Redirecione para WhatsApp ou avaliação inicial gratuita.
+"""
+    
+    return prompt
+
+def get_default_system_prompt():
+    """Prompt padrão caso KB não carregue"""
+    return """Você é a Manu, assistente virtual da Lana Estética.
+Responda de forma profissional e redirecione para WhatsApp: https://wa.me/5511932571982"""
 
 # ─────────────────────────────────────────────────────────────
 # PALAVRAS-CHAVE PARA ATENDIMENTO HUMANO
@@ -190,76 +222,24 @@ def notify_telegram(text):
         log.error(f"Telegram error: {e}")
 
 # ─────────────────────────────────────────────────────────────
-# FUNÇÕES CLINISITE
-# ─────────────────────────────────────────────────────────────
-def get_available_slots(period="tarde"):
-    MANHA_PREFS = ["09:00", "09:30", "10:00", "10:30", "08:30", "08:00", "11:00", "11:30"]
-    TARDE_POS_ALMOCO = ["13:30", "14:00", "14:30", "15:00"]
-    TARDE_FINAL = ["17:00", "17:30", "18:00", "18:30", "16:30", "16:00"]
-    today = datetime.now()
-    dates_to_check = []
-    for i in range(1, 14):
-        d = today + timedelta(days=i)
-        if d.weekday() != 6:
-            dates_to_check.append(d)
-        if len(dates_to_check) >= 10:
-            break
-    results = []
-    dias_semana = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]
-    try:
-        for d in dates_to_check:
-            date_str = d.strftime("%Y-%m-%d")
-            url = f"{CLINISITE_API}?procedure_id={CLINISITE_PROCEDURE_ID}&iso_date={date_str}&procedure_from_event=0"
-            resp = requests.get(url, timeout=10, headers={
-                "User-Agent": "Mozilla/5.0",
-                "Referer": "https://clini.site/lanaeastetica"
-            })
-            if resp.status_code != 200:
-                continue
-            all_slots = resp.json()
-            if not all_slots:
-                continue
-            dia_nome = dias_semana[d.weekday()]
-            dia_fmt = f"{dia_nome}, {d.strftime('%d/%m')}"
-            if period.lower() in ["manha", "manhã"]:
-                chosen = next((s for s in MANHA_PREFS if s in all_slots), None)
-                if chosen:
-                    results.append(f"• {dia_fmt} às {chosen}")
-                    if len(results) >= 2:
-                        break
-            else:
-                slot_almoco = next((s for s in TARDE_POS_ALMOCO if s in all_slots), None)
-                slot_final = next((s for s in TARDE_FINAL if s in all_slots), None)
-                slots_dia = []
-                if slot_almoco:
-                    slots_dia.append(slot_almoco)
-                if slot_final:
-                    slots_dia.append(slot_final)
-                if slots_dia:
-                    results.append(f"• {dia_fmt}: {' ou '.join(slots_dia)}")
-                    if len(results) >= 2:
-                        break
-        if results:
-            return "\n".join(results)
-        return "Nenhum horário disponível nos próximos dias. Entre em contato pelo WhatsApp: https://wa.me/5511932571982"
-    except Exception as e:
-        log.error(f"CliniSite error: {e}")
-        return "Não consegui verificar os horários agora. Entre em contato pelo WhatsApp: https://wa.me/5511932571982"
-
-# ─────────────────────────────────────────────────────────────
 # FUNÇÕES IA
 # ─────────────────────────────────────────────────────────────
 def is_human_request(text):
     text_lower = text.lower()
     return any(kw in text_lower for kw in HUMAN_KEYWORDS)
 
-def generate_ai_response(thread_id, user_message):
+def generate_ai_response(thread_id, user_message, system_prompt):
     if thread_id not in conversation_context:
         conversation_context[thread_id] = []
+    
     conversation_context[thread_id].append({"role": "user", "content": user_message})
+    
+    # Manter apenas os últimos 20 turnos de conversa
     if len(conversation_context[thread_id]) > 20:
         conversation_context[thread_id] = conversation_context[thread_id][-20:]
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + conversation_context[thread_id]
+    
+    messages = [{"role": "system", "content": system_prompt}] + conversation_context[thread_id]
+    
     try:
         response = ai_client.chat.completions.create(
             model="gpt-4.1-mini",
@@ -281,7 +261,7 @@ def create_ig_client():
     cl = Client()
     cl.delay_range = [1, 3]
 
-    # Carregar sessão a partir de variável de ambiente (base64) — para Railway
+    # Carregar sessão a partir de variável de ambiente (base64)
     if IG_SESSION_B64:
         try:
             session_json = base64.b64decode(IG_SESSION_B64).decode("utf-8")
@@ -305,11 +285,11 @@ def create_ig_client():
     log.error("Nenhuma sessão válida. Configure IG_SESSION_B64 ou execute login_totp.py primeiro.")
     raise Exception("Sessão não encontrada.")
 
-def process_message(cl, thread_id, thread_title, user_id, message_text, message_id):
+def process_message(cl, thread_id, thread_title, user_id, message_text, message_id, system_prompt):
     log.info(f"[MSG] Thread: {thread_title} | Msg: {message_text[:60]}")
 
     if is_human_request(message_text):
-        response = "Claro! Para falar diretamente com a gente, é só chamar no WhatsApp! 😊 https://wa.me/5511932571982"
+        response = f"Claro! Para falar diretamente com a gente, é só chamar no WhatsApp! 😊 {KB.get('contato', {}).get('whatsapp_link', 'https://wa.me/5511932571982')}"
         try:
             cl.direct_send(response, thread_ids=[thread_id])
             log.info(f"[SENT] Atendimento humano → {thread_title}")
@@ -323,7 +303,7 @@ def process_message(cl, thread_id, thread_title, user_id, message_text, message_
         )
         return
 
-    ai_response = generate_ai_response(thread_id, message_text)
+    ai_response = generate_ai_response(thread_id, message_text, system_prompt)
 
     if "[HUMANO]" in ai_response:
         ai_response = ai_response.replace("[HUMANO]", "").strip()
@@ -344,7 +324,20 @@ def process_message(cl, thread_id, thread_title, user_id, message_text, message_
 # LOOP PRINCIPAL
 # ─────────────────────────────────────────────────────────────
 def main():
-    log.info("🚀 Instagram Monitor iniciado - Lana Estética")
+    global KB
+    
+    log.info("🚀 Instagram Monitor v2.0 iniciado - Lana Estética")
+    
+    # Carregar KB na inicialização
+    KB = load_knowledge_base()
+    if not KB:
+        log.error("❌ Falha ao carregar KB. Encerrando.")
+        notify_telegram("❌ *Monitor falhou ao iniciar*\nErro: Não consegui carregar o JSON da KB")
+        sys.exit(1)
+    
+    # Construir prompt dinâmico com base na KB
+    system_prompt = build_system_prompt(KB)
+    
     if TEST_MODE_USER:
         log.info(f"⚠️  MODO DE TESTE: respondendo apenas a: {', '.join('@' + u for u in TEST_MODE_USERS)}")
 
@@ -357,7 +350,12 @@ def main():
 
     my_user_id = str(cl.user_id)
     log.info(f"Logado como: {IG_USERNAME} (ID: {my_user_id})")
-    notify_telegram(f"✅ *Monitor do Instagram iniciado!*\nConta: @{IG_USERNAME}\n{'⚠️ MODO TESTE: apenas ' + ', '.join('@' + u for u in TEST_MODE_USERS) if TEST_MODE_USERS else 'Respondendo a todos os clientes.'}")
+    notify_telegram(
+        f"✅ *Monitor do Instagram iniciado! (v2.0)*\n"
+        f"Conta: @{IG_USERNAME}\n"
+        f"KB: Carregada de {KB_URL}\n"
+        f"{'⚠️ MODO TESTE: apenas ' + ', '.join('@' + u for u in TEST_MODE_USERS) if TEST_MODE_USERS else '✅ Respondendo a todos os clientes.'}"
+    )
 
     while True:
         try:
@@ -398,7 +396,7 @@ def main():
                     continue
 
                 processed_messages.add(msg_id)
-                process_message(cl, thread_id, thread_title, sender_id, message_text.strip(), msg_id)
+                process_message(cl, thread_id, thread_title, sender_id, message_text.strip(), msg_id, system_prompt)
                 time.sleep(2)
 
             if len(processed_messages) > 1000:
