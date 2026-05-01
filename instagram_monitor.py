@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-Instagram Direct Monitor - Lana Estética v2.2
-VERSÃO CORRIGIDA: Carrega JSON e usa como fonte de verdade
+Instagram Direct Monitor - Lana Estética v2.4
+VERSÃO HARDCODED: Prompt com todas as informações especificadas manualmente
 """
 
 import os
 import sys
-import json
 import time
 import base64
 import logging
@@ -40,117 +39,103 @@ POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "30"))
 TEST_MODE_USER = os.environ.get("TEST_MODE_USER", "romulooooo,lana_rosangela")
 TEST_MODE_USERS = [u.strip().lower() for u in TEST_MODE_USER.split(",") if u.strip()] if TEST_MODE_USER else []
 
-KB_URL = "https://lanaestetica.com.br/_kb-internal.json"
-KB = None
-
 # ─────────────────────────────────────────────────────────────
-# CARREGAR KNOWLEDGE BASE
+# SYSTEM PROMPT HARDCODED
 # ─────────────────────────────────────────────────────────────
-def load_knowledge_base():
-    """Carrega o JSON da KB uma única vez na inicialização"""
-    try:
-        log.info(f"🔄 Carregando KB de {KB_URL}...")
-        response = requests.get(KB_URL, timeout=10)
-        response.raise_for_status()
-        kb = response.json()
-        log.info(f"✅ KB carregada com sucesso!")
-        log.info(f"📋 Versão: {kb.get('versao', 'desconhecida')}")
-        log.info(f"📋 Procedimentos: {len(kb.get('precos', {}))}")
-        return kb
-    except Exception as e:
-        log.error(f"❌ Erro ao carregar KB: {e}")
-        return None
-
-# ─────────────────────────────────────────────────────────────
-# CONSTRUIR SYSTEM PROMPT DINÂMICO
-# ─────────────────────────────────────────────────────────────
-def build_system_prompt(kb):
-    """Constrói o prompt do sistema com base no JSON da KB"""
-    if not kb:
-        log.error("KB não carregada. Usando prompt padrão.")
-        return get_default_system_prompt()
-    
-    # Extrair informações da KB
-    clinica = kb.get("clinica", {})
-    contato = kb.get("contato", {})
-    localizacao = kb.get("localizacao", {})
-    horarios = kb.get("horarios", {})
-    agendamento = kb.get("agendamento", {})
-    precos = kb.get("precos", {})
-    
-    # Formatar preços para exibição
-    precos_formatados = []
-    for proc_key, proc_info in precos.items():
-        if proc_key.startswith("_"):
-            continue
-        nome = proc_info.get("nome", "")
-        preco = proc_info.get("preco", "")
-        detalhes = proc_info.get("detalhes", "")
-        precos_formatados.append(f"• {nome}: {preco} ({detalhes})")
-    
-    precos_str = "\n".join(precos_formatados)
-    
-    # Extrair instruções de agendamento
-    instrucoes_agendamento = agendamento.get("instrucao_agendamento_bot", {})
-    passos_agendamento = "\n".join(instrucoes_agendamento.get("passos", []))
-    
-    prompt = f"""Você é a Manu, assistente virtual da Lana Estética, clínica especializada em estética avançada.
+SYSTEM_PROMPT = """Você é a Manu, assistente virtual da Lana Estética, clínica especializada em estética avançada.
 
 ╔═══════════════════════════════════════════════════════════════╗
-║              INFORMAÇÕES DA CLÍNICA (FONTE: JSON)             ║
+║                    INFORMAÇÕES DA CLÍNICA                     ║
 ╚═══════════════════════════════════════════════════════════════╝
 
-CLÍNICA: {clinica.get('nome', 'Lana Estética')}
-Lema: {clinica.get('lema', 'Estética avançada. Resultado que você sente.')}
-Responsável: Dra. Lana ({clinica.get('titulo', 'Biomédica Esteta')})
+CLÍNICA: Lana Estética
+Lema: Estética avançada. Resultado que você sente.
+Responsável: Dra. Lana (Biomédica Esteta)
 
 LOCALIZAÇÃO:
-Endereço: {localizacao.get('endereco', '')}, {localizacao.get('bairro', '')} - {localizacao.get('cidade', '')}
-CEP: {localizacao.get('cep', '')}
-Metrô: {localizacao.get('metro', {}).get('estacao', '')} ({localizacao.get('metro', {}).get('linha', '')})
+📍 Avenida Brasil, 1000 - Consolação - São Paulo - SP
+CEP: 01311-100
+🚇 Metrô: Consolação (Linha Vermelha)
 
 HORÁRIOS:
-Terça a Sábado: {horarios.get('terca', '09h às 19h')}
-Domingo e Segunda: Fechado
+📅 Terça a Sábado: 09h às 19h
+📅 Domingo e Segunda: Fechado
 
 CONTATO:
-WhatsApp: {contato.get('whatsapp', '')}
-Instagram: {contato.get('instagram', '')}
+📱 WhatsApp: (11) 93257-1982
+📷 Instagram: @lana_estetica
+📧 Email: contato@lanaestetica.com.br
 
 ╔═══════════════════════════════════════════════════════════════╗
 ║                    PROCEDIMENTOS E PREÇOS                     ║
 ╚═══════════════════════════════════════════════════════════════╝
 
-{precos_str}
+1️⃣ RADIANCE SKIN — R$ 990,00
+   Protocolo exclusivo para melasma e manchas
+
+2️⃣ MICROAGULHAMENTO — R$ 380,00
+   Estimulação de colágeno
+
+3️⃣ LIMPEZA DE PELE — R$ 159,00
+   Limpeza profunda e desobstrução
+
+4️⃣ FREEACNE — R$ 990,00
+   Protocolo para acne
+
+5️⃣ REGENERA — R$ 580,00
+   Regeneração celular
+
+6️⃣ SKIN LIFT — R$ 1.800,00
+   Protocolo completo de rejuvenescimento
+
+7️⃣ BOTOX — TERÇO SUPERIOR (3 regiões, 50ui) — R$ 950,00
+   Aplicação em testa, glabela e pés de galinha
+
+8️⃣ BOTOX FULL FACE — R$ 1.399,00
+   Aplicação em todo o rosto
+
+9️⃣ BIOESTIMULADOR DE COLÁGENO — R$ 1.200,00
+   Estimulação natural de colágeno
+
+🔟 PEELING MAR MORTO — R$ 480,00
+   Renovação profunda com minerais
+
+1️⃣1️⃣ SKINEYES — Sob consulta
+   Protocolo exclusivo para região dos olhos
+
+💳 Todos os procedimentos podem ser parcelados em até 6x sem juros no cartão!
 
 ╔═══════════════════════════════════════════════════════════════╗
 ║                  FLUXO DE AGENDAMENTO                         ║
 ╚═══════════════════════════════════════════════════════════════╝
 
-REGRA CRÍTICA: {instrucoes_agendamento.get('regra', 'NUNCA tentar agendar um horário diretamente.')}
+REGRA CRÍTICA: NUNCA tentar agendar um horário diretamente.
+O processo de agendamento é feito pelo WhatsApp da clínica.
 
-Passos para agendamento:
-{passos_agendamento}
+Passos:
+1. Solicitar o nome completo da cliente
+2. Solicitar o número de WhatsApp da cliente
+3. Perguntar qual procedimento ela tem interesse
+4. Enviar essas informações (nome, WhatsApp e procedimento desejado) para a Dra. Lana via Telegram
+5. Informar à cliente: "Em breve entraremos em contato pelo seu WhatsApp para confirmar dia e horário disponíveis. 😊"
+
+Mensagem de confirmação: "Perfeito! Anotei seu interesse no [PROCEDIMENTO]. Em breve nossa equipe entrará em contato pelo seu WhatsApp para agendar o melhor dia e horário para você. 😊"
+
+IMPORTANTE: Não oferecer datas, horários ou disponibilidade. Toda a negociação de agenda é feita pela Dra. Lana diretamente pelo WhatsApp.
 
 ╔═══════════════════════════════════════════════════════════════╗
 ║                    REGRAS DE COMPORTAMENTO                    ║
 ╚═══════════════════════════════════════════════════════════════╝
 
-1. FONTE DE VERDADE: Todas as informações acima vêm do JSON. NUNCA invente informações.
+1. FONTE DE VERDADE: Todas as informações acima são a verdade absoluta. NUNCA invente informações sobre procedimentos, preços ou horários.
 2. RESPOSTAS CURTAS: Máximo 3-4 frases. É Instagram Direct.
-3. TOM: Profissional, técnico, didático e acolhedor. Use no máximo 1-2 emojis.
-4. AGENDAMENTO: Siga RIGOROSAMENTE o fluxo acima.
+3. TOM: Profissional, técnico, didático e acolhedor. Use no máximo 1-2 emojis por mensagem.
+4. AGENDAMENTO: Siga RIGOROSAMENTE o fluxo acima. Não tente agendar diretamente.
 5. ATENDIMENTO HUMANO: Se cliente pedir para falar com alguém, responda:
-   "Claro! Para falar diretamente com a gente, é só chamar no WhatsApp! 😊 {contato.get('whatsapp_link', 'https://wa.me/5511932571982')}"
-6. NUNCA INVENTE: Não crie informações sobre procedimentos, preços ou horários que não estejam no JSON acima.
+   "Claro! Para falar diretamente com a gente, é só chamar no WhatsApp! 😊 https://wa.me/5511932571982"
+6. NUNCA INVENTE: Não crie informações sobre procedimentos, preços ou horários que não estejam listados acima.
+7. DÚVIDAS: Se não souber algo, redirecione para WhatsApp: https://wa.me/5511932571982
 """
-    
-    return prompt
-
-def get_default_system_prompt():
-    """Prompt padrão caso KB não carregue"""
-    return """Você é a Manu, assistente virtual da Lana Estética.
-Responda de forma profissional e redirecione para WhatsApp: https://wa.me/5511932571982"""
 
 # ─────────────────────────────────────────────────────────────
 # PALAVRAS-CHAVE PARA ATENDIMENTO HUMANO
@@ -188,7 +173,7 @@ def is_human_request(text):
     text_lower = text.lower()
     return any(kw in text_lower for kw in HUMAN_KEYWORDS)
 
-def generate_ai_response(thread_id, user_message, system_prompt):
+def generate_ai_response(thread_id, user_message):
     if thread_id not in conversation_context:
         conversation_context[thread_id] = []
     
@@ -197,7 +182,7 @@ def generate_ai_response(thread_id, user_message, system_prompt):
     if len(conversation_context[thread_id]) > 20:
         conversation_context[thread_id] = conversation_context[thread_id][-20:]
     
-    messages = [{"role": "system", "content": system_prompt}] + conversation_context[thread_id]
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + conversation_context[thread_id]
     
     try:
         response = ai_client.chat.completions.create(
@@ -242,7 +227,7 @@ def create_ig_client():
     log.error("Nenhuma sessão válida. Configure IG_SESSION_B64 ou execute login_totp.py primeiro.")
     raise Exception("Sessão não encontrada.")
 
-def process_message(cl, thread_id, thread_title, user_id, message_text, message_id, system_prompt):
+def process_message(cl, thread_id, thread_title, user_id, message_text, message_id):
     log.info(f"[MSG] Thread: {thread_title} | Msg: {message_text[:60]}")
 
     if is_human_request(message_text):
@@ -260,7 +245,7 @@ def process_message(cl, thread_id, thread_title, user_id, message_text, message_
         )
         return
 
-    ai_response = generate_ai_response(thread_id, message_text, system_prompt)
+    ai_response = generate_ai_response(thread_id, message_text)
 
     if "[HUMANO]" in ai_response:
         ai_response = ai_response.replace("[HUMANO]", "").strip()
@@ -281,22 +266,8 @@ def process_message(cl, thread_id, thread_title, user_id, message_text, message_
 # LOOP PRINCIPAL
 # ─────────────────────────────────────────────────────────────
 def main():
-    global KB
-    
-    log.info("🚀 Instagram Monitor v2.2 iniciado - Lana Estética")
-    
-    # Carregar KB na inicialização
-    KB = load_knowledge_base()
-    log.info(f"✅ KB Global carregada: {KB is not None}")
-    if not KB:
-        log.error("❌ Falha ao carregar KB. Encerrando.")
-        notify_telegram("❌ *Monitor falhou ao iniciar*\nErro: Não consegui carregar o JSON da KB")
-        sys.exit(1)
-    
-    # Construir prompt dinâmico com base na KB
-    log.info(f"🔨 Construindo prompt com KB...")
-    system_prompt = build_system_prompt(KB)
-    log.info(f"✅ Prompt construído com sucesso (tamanho: {len(system_prompt)} chars)")
+    log.info("🚀 Instagram Monitor v2.4 iniciado - Lana Estética")
+    log.info("✅ Prompt HARDCODED carregado com sucesso")
     
     if TEST_MODE_USER:
         log.info(f"⚠️  MODO DE TESTE: respondendo apenas a: {', '.join('@' + u for u in TEST_MODE_USERS)}")
@@ -311,9 +282,9 @@ def main():
     my_user_id = str(cl.user_id)
     log.info(f"Logado como: {IG_USERNAME} (ID: {my_user_id})")
     notify_telegram(
-        f"✅ *Monitor do Instagram iniciado! (v2.2)*\n"
+        f"✅ *Monitor do Instagram iniciado! (v2.4)*\n"
         f"Conta: @{IG_USERNAME}\n"
-        f"KB: Carregada de {KB_URL}\n"
+        f"Prompt: HARDCODED\n"
         f"{'⚠️ MODO TESTE: apenas ' + ', '.join('@' + u for u in TEST_MODE_USERS) if TEST_MODE_USERS else '✅ Respondendo a todos os clientes.'}"
     )
 
@@ -356,7 +327,7 @@ def main():
                     continue
 
                 processed_messages.add(msg_id)
-                process_message(cl, thread_id, thread_title, sender_id, message_text.strip(), msg_id, system_prompt)
+                process_message(cl, thread_id, thread_title, sender_id, message_text.strip(), msg_id)
                 time.sleep(2)
 
             if len(processed_messages) > 1000:
