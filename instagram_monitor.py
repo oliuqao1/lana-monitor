@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Instagram Direct Monitor - Lana Estética v2.4
-VERSÃO HARDCODED: Prompt com todas as informações especificadas manualmente
+Instagram Direct Monitor - Lana Estética v2.5 TEST
+VERSÃO SIMPLIFICADA: Responde com mensagem fixa para debug
 """
 
 import os
@@ -9,11 +9,9 @@ import sys
 import time
 import base64
 import logging
-import requests
 from pathlib import Path
-from openai import OpenAI
 from instagrapi import Client
-from instagrapi.exceptions import LoginRequired, ChallengeRequired, TwoFactorRequired
+from instagrapi.exceptions import LoginRequired
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,12 +21,6 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # Configurações
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-ai_client = OpenAI(api_key=OPENAI_API_KEY)
-
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8798305087:AAEUmxbeZJA8B1EqCyWQv72cxqtYmX_Lczo")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "7959934326")
-
 IG_USERNAME = os.environ.get("IG_USERNAME", "lana_estetica")
 IG_PASSWORD = os.environ.get("IG_PASSWORD", "")
 IG_SESSION_FILE = "/tmp/ig_instagrapi_session.json"
@@ -39,164 +31,8 @@ POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "30"))
 TEST_MODE_USER = os.environ.get("TEST_MODE_USER", "romulooooo,lana_rosangela")
 TEST_MODE_USERS = [u.strip().lower() for u in TEST_MODE_USER.split(",") if u.strip()] if TEST_MODE_USER else []
 
-# ─────────────────────────────────────────────────────────────
-# SYSTEM PROMPT HARDCODED
-# ─────────────────────────────────────────────────────────────
-SYSTEM_PROMPT = """Você é a Manu, assistente virtual da Lana Estética, clínica especializada em estética avançada.
-
-╔═══════════════════════════════════════════════════════════════╗
-║                    INFORMAÇÕES DA CLÍNICA                     ║
-╚═══════════════════════════════════════════════════════════════╝
-
-CLÍNICA: Lana Estética
-Lema: Estética avançada. Resultado que você sente.
-Responsável: Dra. Lana (Biomédica Esteta)
-
-LOCALIZAÇÃO:
-📍 Avenida Brasil, 1000 - Consolação - São Paulo - SP
-CEP: 01311-100
-🚇 Metrô: Consolação (Linha Vermelha)
-
-HORÁRIOS:
-📅 Terça a Sábado: 09h às 19h
-📅 Domingo e Segunda: Fechado
-
-CONTATO:
-📱 WhatsApp: (11) 93257-1982
-📷 Instagram: @lana_estetica
-📧 Email: contato@lanaestetica.com.br
-
-╔═══════════════════════════════════════════════════════════════╗
-║                    PROCEDIMENTOS E PREÇOS                     ║
-╚═══════════════════════════════════════════════════════════════╝
-
-1️⃣ RADIANCE SKIN — R$ 990,00
-   Protocolo exclusivo para melasma e manchas
-
-2️⃣ MICROAGULHAMENTO — R$ 380,00
-   Estimulação de colágeno
-
-3️⃣ LIMPEZA DE PELE — R$ 159,00
-   Limpeza profunda e desobstrução
-
-4️⃣ FREEACNE — R$ 990,00
-   Protocolo para acne
-
-5️⃣ REGENERA — R$ 580,00
-   Regeneração celular
-
-6️⃣ SKIN LIFT — R$ 1.800,00
-   Protocolo completo de rejuvenescimento
-
-7️⃣ BOTOX — TERÇO SUPERIOR (3 regiões, 50ui) — R$ 950,00
-   Aplicação em testa, glabela e pés de galinha
-
-8️⃣ BOTOX FULL FACE — R$ 1.399,00
-   Aplicação em todo o rosto
-
-9️⃣ BIOESTIMULADOR DE COLÁGENO — R$ 1.200,00
-   Estimulação natural de colágeno
-
-🔟 PEELING MAR MORTO — R$ 480,00
-   Renovação profunda com minerais
-
-1️⃣1️⃣ SKINEYES — Sob consulta
-   Protocolo exclusivo para região dos olhos
-
-💳 Todos os procedimentos podem ser parcelados em até 6x sem juros no cartão!
-
-╔═══════════════════════════════════════════════════════════════╗
-║                  FLUXO DE AGENDAMENTO                         ║
-╚═══════════════════════════════════════════════════════════════╝
-
-REGRA CRÍTICA: NUNCA tentar agendar um horário diretamente.
-O processo de agendamento é feito pelo WhatsApp da clínica.
-
-Passos:
-1. Solicitar o nome completo da cliente
-2. Solicitar o número de WhatsApp da cliente
-3. Perguntar qual procedimento ela tem interesse
-4. Enviar essas informações (nome, WhatsApp e procedimento desejado) para a Dra. Lana via Telegram
-5. Informar à cliente: "Em breve entraremos em contato pelo seu WhatsApp para confirmar dia e horário disponíveis. 😊"
-
-Mensagem de confirmação: "Perfeito! Anotei seu interesse no [PROCEDIMENTO]. Em breve nossa equipe entrará em contato pelo seu WhatsApp para agendar o melhor dia e horário para você. 😊"
-
-IMPORTANTE: Não oferecer datas, horários ou disponibilidade. Toda a negociação de agenda é feita pela Dra. Lana diretamente pelo WhatsApp.
-
-╔═══════════════════════════════════════════════════════════════╗
-║                    REGRAS DE COMPORTAMENTO                    ║
-╚═══════════════════════════════════════════════════════════════╝
-
-1. FONTE DE VERDADE: Todas as informações acima são a verdade absoluta. NUNCA invente informações sobre procedimentos, preços ou horários.
-2. RESPOSTAS CURTAS: Máximo 3-4 frases. É Instagram Direct.
-3. TOM: Profissional, técnico, didático e acolhedor. Use no máximo 1-2 emojis por mensagem.
-4. AGENDAMENTO: Siga RIGOROSAMENTE o fluxo acima. Não tente agendar diretamente.
-5. ATENDIMENTO HUMANO: Se cliente pedir para falar com alguém, responda:
-   "Claro! Para falar diretamente com a gente, é só chamar no WhatsApp! 😊 https://wa.me/5511932571982"
-6. NUNCA INVENTE: Não crie informações sobre procedimentos, preços ou horários que não estejam listados acima.
-7. DÚVIDAS: Se não souber algo, redirecione para WhatsApp: https://wa.me/5511932571982
-"""
-
-# ─────────────────────────────────────────────────────────────
-# PALAVRAS-CHAVE PARA ATENDIMENTO HUMANO
-# ─────────────────────────────────────────────────────────────
-HUMAN_KEYWORDS = [
-    "falar com alguém", "falar com uma pessoa", "atendimento humano",
-    "quero falar com", "preciso falar com", "falar com a lana",
-    "falar com a dra", "atendente", "humano", "pessoa real",
-    "falar com vocês", "chamar alguém", "quero atendimento"
-]
-
-# ─────────────────────────────────────────────────────────────
-# ESTADO DA CONVERSA
-# ─────────────────────────────────────────────────────────────
-conversation_context = {}
+# Estado
 processed_messages = set()
-
-# ─────────────────────────────────────────────────────────────
-# FUNÇÕES TELEGRAM
-# ─────────────────────────────────────────────────────────────
-def notify_telegram(text):
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-            json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"},
-            timeout=5
-        )
-    except Exception as e:
-        log.error(f"Telegram error: {e}")
-
-# ─────────────────────────────────────────────────────────────
-# FUNÇÕES IA
-# ─────────────────────────────────────────────────────────────
-def is_human_request(text):
-    text_lower = text.lower()
-    return any(kw in text_lower for kw in HUMAN_KEYWORDS)
-
-def generate_ai_response(thread_id, user_message):
-    if thread_id not in conversation_context:
-        conversation_context[thread_id] = []
-    
-    conversation_context[thread_id].append({"role": "user", "content": user_message})
-    
-    if len(conversation_context[thread_id]) > 20:
-        conversation_context[thread_id] = conversation_context[thread_id][-20:]
-    
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + conversation_context[thread_id]
-    
-    try:
-        response = ai_client.chat.completions.create(
-            model="gpt-4.1-mini",
-            messages=messages,
-            max_tokens=400,
-            temperature=0.7
-        )
-        ai_text = response.choices[0].message.content
-        conversation_context[thread_id].append({"role": "assistant", "content": ai_text})
-        return ai_text
-    except Exception as e:
-        log.error(f"OpenAI error: {e}")
-        return "Desculpe, tive um problema técnico. Por favor, entre em contato pelo WhatsApp: https://wa.me/5511932571982"
 
 # ─────────────────────────────────────────────────────────────
 # INSTAGRAM CLIENT
@@ -210,87 +46,46 @@ def create_ig_client():
             session_json = base64.b64decode(IG_SESSION_B64).decode("utf-8")
             with open(IG_SESSION_FILE, "w") as f:
                 f.write(session_json)
-            log.info("Sessão carregada da variável de ambiente IG_SESSION_B64")
+            log.info("✅ Sessão carregada de IG_SESSION_B64")
         except Exception as e:
-            log.warning(f"Erro ao decodificar IG_SESSION_B64: {e}")
+            log.warning(f"❌ Erro ao decodificar IG_SESSION_B64: {e}")
 
     if Path(IG_SESSION_FILE).exists():
         try:
             cl.load_settings(IG_SESSION_FILE)
             cl.login(IG_USERNAME, IG_PASSWORD)
-            log.info("Sessão carregada com sucesso!")
+            log.info("✅ Sessão carregada com sucesso!")
             cl.dump_settings(IG_SESSION_FILE)
             return cl
         except Exception as e:
-            log.warning(f"Sessão inválida: {e}")
+            log.warning(f"❌ Sessão inválida: {e}")
 
-    log.error("Nenhuma sessão válida. Configure IG_SESSION_B64 ou execute login_totp.py primeiro.")
+    log.error("❌ Nenhuma sessão válida encontrada.")
     raise Exception("Sessão não encontrada.")
-
-def process_message(cl, thread_id, thread_title, user_id, message_text, message_id):
-    log.info(f"[MSG] Thread: {thread_title} | Msg: {message_text[:60]}")
-
-    if is_human_request(message_text):
-        response = f"Claro! Para falar diretamente com a gente, é só chamar no WhatsApp! 😊 https://wa.me/5511932571982"
-        try:
-            cl.direct_send(response, thread_ids=[thread_id])
-            log.info(f"[SENT] Atendimento humano → {thread_title}")
-        except Exception as e:
-            log.error(f"Send error: {e}")
-        notify_telegram(
-            f"🚨 *ATENDIMENTO HUMANO SOLICITADO*\n\n"
-            f"👤 *Cliente:* {thread_title}\n"
-            f"💬 *Mensagem:* {message_text}\n\n"
-            f"_Avise para entrar em contato pelo WhatsApp._"
-        )
-        return
-
-    ai_response = generate_ai_response(thread_id, message_text)
-
-    if "[HUMANO]" in ai_response:
-        ai_response = ai_response.replace("[HUMANO]", "").strip()
-        notify_telegram(
-            f"🚨 *ATENDIMENTO HUMANO SOLICITADO*\n\n"
-            f"👤 *Cliente:* {thread_title}\n"
-            f"💬 *Mensagem:* {message_text}\n\n"
-            f"_Avise para entrar em contato._"
-        )
-
-    try:
-        cl.direct_send(ai_response, thread_ids=[thread_id])
-        log.info(f"[SENT] → {thread_title}: {ai_response[:60]}...")
-    except Exception as e:
-        log.error(f"Send error: {e}")
 
 # ─────────────────────────────────────────────────────────────
 # LOOP PRINCIPAL
 # ─────────────────────────────────────────────────────────────
 def main():
-    log.info("🚀 Instagram Monitor v2.4 iniciado - Lana Estética")
-    log.info("✅ Prompt HARDCODED carregado com sucesso")
+    log.info("🚀 Instagram Monitor v2.5 TEST - Modo Simplificado")
     
-    if TEST_MODE_USER:
+    if TEST_MODE_USERS:
         log.info(f"⚠️  MODO DE TESTE: respondendo apenas a: {', '.join('@' + u for u in TEST_MODE_USERS)}")
 
     try:
         cl = create_ig_client()
     except Exception as e:
-        log.error(f"Falha ao criar cliente Instagram: {e}")
-        notify_telegram(f"❌ *Monitor falhou ao iniciar*\nErro: {str(e)[:100]}")
+        log.error(f"❌ Falha ao criar cliente Instagram: {e}")
         sys.exit(1)
 
     my_user_id = str(cl.user_id)
-    log.info(f"Logado como: {IG_USERNAME} (ID: {my_user_id})")
-    notify_telegram(
-        f"✅ *Monitor do Instagram iniciado! (v2.4)*\n"
-        f"Conta: @{IG_USERNAME}\n"
-        f"Prompt: HARDCODED\n"
-        f"{'⚠️ MODO TESTE: apenas ' + ', '.join('@' + u for u in TEST_MODE_USERS) if TEST_MODE_USERS else '✅ Respondendo a todos os clientes.'}"
-    )
+    log.info(f"✅ Logado como: {IG_USERNAME} (ID: {my_user_id})")
+    log.info(f"✅ Bot pronto para responder!")
 
     while True:
         try:
             threads = cl.direct_threads(amount=20)
+            log.info(f"📨 Checando {len(threads)} threads...")
 
             for thread in threads:
                 thread_id = str(thread.id)
@@ -310,10 +105,11 @@ def main():
                     processed_messages.add(msg_id)
                     continue
 
-                # Modo de teste: ignorar threads que não são do usuário de teste
+                # Modo de teste
                 if TEST_MODE_USERS:
                     thread_users = [u.username.lower() for u in thread.users]
                     if not any(tu in thread_users for tu in TEST_MODE_USERS):
+                        log.info(f"⏭️  Ignorando thread (não é usuário de teste): {thread_title}")
                         processed_messages.add(msg_id)
                         continue
 
@@ -327,28 +123,55 @@ def main():
                     continue
 
                 processed_messages.add(msg_id)
-                process_message(cl, thread_id, thread_title, sender_id, message_text.strip(), msg_id)
+                
+                # RESPOSTA FIXA DE TESTE
+                test_response = """✅ BOT FUNCIONANDO!
+
+Olá! Sou a Manu, assistente da Lana Estética.
+
+📋 Procedimentos disponíveis:
+• Radiance Skin - R$ 990
+• Microagulhamento - R$ 380
+• Limpeza de Pele - R$ 159
+• FreeAcne - R$ 990
+• Regenera - R$ 580
+• Skin Lift - R$ 1.800
+• Botox Terço Superior - R$ 950
+• Botox Full Face - R$ 1.399
+• Bioestimulador - R$ 1.200
+• Peeling Mar Morto - R$ 480
+• SkinEyes - Sob consulta
+
+Qual procedimento te interessa? 😊"""
+
+                log.info(f"📨 Mensagem de {thread_title}: {message_text[:50]}")
+                
+                try:
+                    cl.direct_send(test_response, thread_ids=[thread_id])
+                    log.info(f"✅ Resposta enviada para {thread_title}")
+                except Exception as e:
+                    log.error(f"❌ Erro ao enviar: {e}")
+
                 time.sleep(2)
 
             if len(processed_messages) > 1000:
                 processed_messages.clear()
 
         except LoginRequired:
-            log.warning("Sessão expirada, fazendo novo login...")
+            log.warning("⚠️  Sessão expirada, fazendo novo login...")
             try:
                 cl.login(IG_USERNAME, IG_PASSWORD)
                 cl.dump_settings(IG_SESSION_FILE)
-                log.info("Re-login realizado!")
+                log.info("✅ Re-login realizado!")
             except Exception as e:
-                log.error(f"Re-login falhou: {e}")
-                notify_telegram(f"⚠️ *Sessão do Instagram expirou*\nErro: {str(e)[:100]}")
+                log.error(f"❌ Re-login falhou: {e}")
 
         except KeyboardInterrupt:
-            log.info("Monitor encerrado pelo usuário.")
+            log.info("🛑 Monitor encerrado pelo usuário.")
             break
 
         except Exception as e:
-            log.error(f"Loop error: {e}")
+            log.error(f"❌ Erro no loop: {e}")
 
         time.sleep(POLL_INTERVAL)
 
