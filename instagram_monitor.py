@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Instagram Direct Monitor - Lana Estética v2.8
-VERSÃO ESTÁVEL: Betina sem histórico de conversa (cada mensagem é independente)
+Instagram Direct Monitor - Lana Estética v2.9
+VERSÃO ROBUSTA: Tratamento de erro 404 e re-login automático
 """
 
 import os
@@ -12,7 +12,7 @@ import logging
 from pathlib import Path
 from openai import OpenAI
 from instagrapi import Client
-from instagrapi.exceptions import LoginRequired
+from instagrapi.exceptions import LoginRequired, ClientError
 
 logging.basicConfig(
     level=logging.INFO,
@@ -302,26 +302,48 @@ def process_message(cl, thread_id, thread_title, user_id, message_text, message_
 # LOOP PRINCIPAL
 # ─────────────────────────────────────────────────────────────
 def main():
-    log.info("🚀 Betina v2.8 - Lana Estética")
-    log.info("✅ Sem histórico de conversa (cada mensagem é independente)")
+    log.info("🚀 Betina v2.9 - Lana Estética")
+    log.info("✅ Tratamento robusto de erros 404 e re-login automático")
     
     if TEST_MODE_USERS:
         log.info(f"⚠️  MODO TESTE: {', '.join('@' + u for u in TEST_MODE_USERS)}")
 
-    try:
-        cl = create_ig_client()
-    except Exception as e:
-        log.error(f"❌ Falha ao criar cliente: {e}")
-        sys.exit(1)
-
-    my_user_id = str(cl.user_id)
-    log.info(f"✅ Logado como: {IG_USERNAME}")
-    log.info(f"✅ Pronto para responder!")
+    cl = None
+    retry_count = 0
+    max_retries = 3
 
     while True:
         try:
-            threads = cl.direct_threads(amount=20)
+            # Cria cliente se não existe
+            if cl is None:
+                try:
+                    cl = create_ig_client()
+                    retry_count = 0
+                except Exception as e:
+                    log.error(f"❌ Falha ao criar cliente: {e}")
+                    time.sleep(10)
+                    continue
 
+            my_user_id = str(cl.user_id)
+            log.info(f"✅ Logado como: {IG_USERNAME}")
+
+            # Tenta buscar threads
+            try:
+                threads = cl.direct_threads(amount=20)
+            except Exception as e:
+                if "404" in str(e) or "Not Found" in str(e):
+                    log.warning(f"⚠️  Erro 404 - Sessão expirada. Fazendo re-login...")
+                    cl = None
+                    retry_count += 1
+                    if retry_count > max_retries:
+                        log.error("❌ Muitas tentativas de re-login. Aguardando...")
+                        time.sleep(60)
+                        retry_count = 0
+                    continue
+                else:
+                    raise
+
+            # Processa threads
             for thread in threads:
                 thread_id = str(thread.id)
                 thread_title = thread.thread_title or "Desconhecido"
@@ -363,13 +385,14 @@ def main():
                 processed_messages.clear()
 
         except LoginRequired:
-            log.warning("⚠️  Sessão expirada...")
-            try:
-                cl.login(IG_USERNAME, IG_PASSWORD)
-                cl.dump_settings(IG_SESSION_FILE)
-                log.info("✅ Re-login OK")
-            except Exception as e:
-                log.error(f"❌ Re-login falhou: {e}")
+            log.warning("⚠️  LoginRequired - Fazendo re-login...")
+            cl = None
+            retry_count += 1
+            if retry_count > max_retries:
+                log.error("❌ Muitas tentativas de re-login. Aguardando...")
+                time.sleep(60)
+                retry_count = 0
+            continue
 
         except KeyboardInterrupt:
             log.info("🛑 Encerrado")
@@ -377,6 +400,7 @@ def main():
 
         except Exception as e:
             log.error(f"❌ Erro: {e}")
+            time.sleep(10)
 
         time.sleep(POLL_INTERVAL)
 
